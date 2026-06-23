@@ -1,0 +1,1027 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D 模型查看器</title>
+  <style>
+    /* ========== 全局重置 ========== */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background: #1a1a2e; color: #e0e0e0; user-select: none; }
+
+    /* ========== 3D 画布容器 ========== */
+    #viewer-container {
+      width: 100vw;
+      height: 100vh;
+      position: relative;
+      background: radial-gradient(ellipse at center, #1a1a2e 0%, #0f0f1a 100%);
+    }
+    #viewer-container canvas { display: block; width: 100% !important; height: 100% !important; }
+
+    /* ========== 顶部信息栏 ========== */
+    #top-bar {
+      position: absolute; top: 0; left: 0; right: 0;
+      height: 56px;
+      padding: 0 24px;
+      display: flex; align-items: center; justify-content: space-between;
+      background: linear-gradient(180deg, rgba(0,0,0,0.6) 0%, transparent 100%);
+      z-index: 10;
+      pointer-events: none;
+    }
+    #top-bar > * { pointer-events: auto; }
+    #model-title {
+      font-size: 16px; font-weight: 600;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      max-width: 300px;
+    }
+    #model-title .tag {
+      display: inline-block;
+      padding: 2px 8px; border-radius: 4px;
+      font-size: 11px; font-weight: 500;
+      background: rgba(99, 102, 241, 0.3);
+      color: #818cf8;
+      margin-left: 8px;
+    }
+
+    /* ========== 右上角工具栏 ========== */
+    #toolbar {
+      display: flex; gap: 8px; align-items: center;
+    }
+    .tool-btn {
+      width: 36px; height: 36px;
+      border: none; border-radius: 8px;
+      background: rgba(255,255,255,0.08);
+      backdrop-filter: blur(8px);
+      color: #ccc;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px;
+      transition: all 0.2s;
+    }
+    .tool-btn:hover { background: rgba(255,255,255,0.18); color: #fff; transform: scale(1.05); }
+    .tool-btn:active { transform: scale(0.95); }
+    .tool-btn.active { background: rgba(99, 102, 241, 0.35); color: #818cf8; }
+
+    /* ========== 模型统计信息 ========== */
+    #stats-panel {
+      position: absolute; bottom: 24px; left: 24px;
+      padding: 12px 16px;
+      border-radius: 12px;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(12px);
+      font-size: 12px;
+      line-height: 1.6;
+      color: #aaa;
+      z-index: 10;
+      min-width: 140px;
+      pointer-events: none;
+    }
+    #stats-panel .stat-row { display: flex; justify-content: space-between; gap: 20px; }
+    #stats-panel .stat-label { color: #888; }
+    #stats-panel .stat-value { color: #e0e0e0; font-weight: 500; }
+
+    /* ========== 底部控制条 ========== */
+    #bottom-controls {
+      position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 6px; align-items: center;
+      padding: 6px 8px;
+      border-radius: 12px;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(12px);
+      z-index: 10;
+    }
+    .ctrl-btn {
+      padding: 6px 14px;
+      border: none; border-radius: 6px;
+      background: transparent;
+      color: #aaa;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .ctrl-btn:hover { background: rgba(255,255,255,0.1); color: #fff; }
+    .ctrl-btn.active { background: rgba(99, 102, 241, 0.3); color: #818cf8; }
+
+    /* ========== 加载动画 ========== */
+    #loading-overlay {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: #1a1a2e;
+      z-index: 100;
+      transition: opacity 0.5s, visibility 0.5s;
+    }
+    #loading-overlay.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+    .loader-spinner {
+      width: 48px; height: 48px;
+      border: 3px solid rgba(99,102,241,0.15);
+      border-top-color: #818cf8;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loading-text { margin-top: 16px; font-size: 14px; color: #888; }
+    #loading-progress {
+      margin-top: 8px;
+      width: 200px; height: 3px;
+      border-radius: 2px;
+      background: rgba(255,255,255,0.08);
+      overflow: hidden;
+    }
+    #loading-progress-bar {
+      height: 100%; width: 0%;
+      border-radius: 2px;
+      background: linear-gradient(90deg, #6366f1, #818cf8);
+      transition: width 0.3s;
+    }
+
+    /* ========== 右键菜单 ========== */
+    #context-menu {
+      position: fixed;
+      padding: 4px 0;
+      border-radius: 10px;
+      background: rgba(30,30,50,0.95);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255,255,255,0.06);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      z-index: 200;
+      min-width: 160px;
+      display: none;
+    }
+    #context-menu .menu-item {
+      padding: 8px 16px;
+      font-size: 13px;
+      color: #ccc;
+      cursor: pointer;
+      display: flex; align-items: center; gap: 8px;
+      transition: background 0.15s;
+    }
+    #context-menu .menu-item:hover { background: rgba(99,102,241,0.15); color: #fff; }
+    #context-menu .menu-divider { height: 1px; background: rgba(255,255,255,0.06); margin: 4px 0; }
+
+    /* ========== Toast 提示 ========== */
+    #toast {
+      position: fixed; top: 72px; left: 50%; transform: translateX(-50%);
+      padding: 10px 20px;
+      border-radius: 8px;
+      background: rgba(0,0,0,0.8);
+      backdrop-filter: blur(8px);
+      font-size: 13px;
+      color: #e0e0e0;
+      z-index: 300;
+      opacity: 0;
+      transition: opacity 0.3s, transform 0.3s;
+      pointer-events: none;
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ========== 图片查看弹窗 ========== */
+    .modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(4px);
+      z-index: 500;
+      display: none;
+      align-items: center; justify-content: center;
+    }
+    .modal-overlay.show { display: flex; }
+    .modal-box {
+      background: #1e1e32;
+      border-radius: 16px;
+      padding: 24px;
+      min-width: 300px;
+      max-width: 480px;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .modal-box h3 { margin-bottom: 16px; font-size: 16px; }
+    .modal-box label { display: block; font-size: 13px; color: #aaa; margin-bottom: 4px; }
+    .modal-box input[type="text"],
+    .modal-box input[type="url"] {
+      width: 100%; padding: 10px 12px;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.05);
+      color: #e0e0e0;
+      font-size: 13px;
+      outline: none;
+      margin-bottom: 16px;
+    }
+    .modal-box input:focus { border-color: #6366f1; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .modal-actions button {
+      padding: 8px 20px; border: none; border-radius: 8px;
+      font-size: 13px; cursor: pointer; transition: all 0.2s;
+    }
+    .modal-actions .btn-primary { background: #6366f1; color: #fff; }
+    .modal-actions .btn-primary:hover { background: #4f46e5; }
+    .modal-actions .btn-secondary { background: rgba(255,255,255,0.08); color: #ccc; }
+    .modal-actions .btn-secondary:hover { background: rgba(255,255,255,0.15); }
+
+    /* ========== 响应式 ========== */
+    @media (max-width: 640px) {
+      #top-bar { padding: 0 12px; height: 48px; }
+      #model-title { font-size: 13px; max-width: 140px; }
+      #stats-panel { left: 12px; bottom: 80px; padding: 8px 12px; font-size: 11px; }
+      #bottom-controls { padding: 4px 6px; }
+      .ctrl-btn { padding: 4px 10px; font-size: 11px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ===== 加载遮罩 ===== -->
+  <div id="loading-overlay">
+    <div class="loader-spinner"></div>
+    <div id="loading-text">正在加载模型...</div>
+    <div id="loading-progress"><div id="loading-progress-bar"></div></div>
+  </div>
+
+  <!-- ===== 3D 视图容器 ===== -->
+  <div id="viewer-container"></div>
+
+  <!-- ===== 顶栏 ===== -->
+  <div id="top-bar">
+    <div id="model-title">加载中... <span class="tag">GLB</span></div>
+    <div id="toolbar">
+      <button class="tool-btn" id="btn-fullscreen" title="全屏查看">⛶</button>
+      <button class="tool-btn" id="btn-reset" title="重置视角">⟳</button>
+      <button class="tool-btn" id="btn-load" title="加载模型">📂</button>
+    </div>
+  </div>
+
+  <!-- ===== 统计面板 ===== -->
+  <div id="stats-panel">
+    <div class="stat-row"><span class="stat-label">顶点</span><span class="stat-value" id="stat-verts">--</span></div>
+    <div class="stat-row"><span class="stat-label">三角面</span><span class="stat-value" id="stat-tris">--</span></div>
+    <div class="stat-row"><span class="stat-label">材质</span><span class="stat-value" id="stat-mats">--</span></div>
+  </div>
+
+  <!-- ===== 底部控制条 ===== -->
+  <div id="bottom-controls">
+    <button class="ctrl-btn active" data-lighting="studio">影棚</button>
+    <button class="ctrl-btn" data-lighting="bright">明亮</button>
+    <button class="ctrl-btn" data-lighting="dramatic">戏剧</button>
+    <button class="ctrl-btn" data-lighting="wireframe">线框</button>
+  </div>
+
+  <!-- ===== 右键菜单 ===== -->
+  <div id="context-menu">
+    <div class="menu-item" data-action="screenshot">📷 截图保存</div>
+    <div class="menu-item" data-action="reset">⟳ 重置视角</div>
+    <div class="menu-divider"></div>
+    <div class="menu-item" data-action="wireframe">◇ 切换线框</div>
+    <div class="menu-item" data-action="axes">📐 切换坐标轴</div>
+  </div>
+
+  <!-- ===== Toast ===== -->
+  <div id="toast"></div>
+
+  <!-- ===== 加载模型弹窗 ===== -->
+  <div class="modal-overlay" id="load-modal">
+    <div class="modal-box">
+      <h3>加载 3D 模型</h3>
+      <label>模型文件 URL（GLB/GLTF）</label>
+      <input type="url" id="model-url" placeholder="https://example.com/model.glb" />
+      <div class="modal-actions">
+        <button class="btn-secondary" onclick="document.getElementById('load-modal').classList.remove('show')">取消</button>
+        <button class="btn-primary" onclick="loadModelFromInput()">加载</button>
+      </div>
+      <div style="margin-top:12px;font-size:12px;color:#666;text-align:center;">
+        或者把 GLB/GLTF 文件拖进页面
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Three.js Import Map ===== -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <!-- ===== 主程序 ===== -->
+  <script type="module">
+  // ---------------------------------------------------------------------------
+  // IMPORTS
+  // ---------------------------------------------------------------------------
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+  import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+  import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+  import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+  import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+  // ---------------------------------------------------------------------------
+  // STATE
+  // ---------------------------------------------------------------------------
+  const state = {
+    model: null,
+    modelName: '未加载',
+    animations: [],
+    mixer: null,
+    wireframeMode: false,
+    currentLighting: 'studio',
+    showAxes: true,
+    clock: new THREE.Clock(),
+    annotations: [],
+  };
+
+  // ---------------------------------------------------------------------------
+  // DOM REFS
+  // ---------------------------------------------------------------------------
+  const container = document.getElementById('viewer-container');
+  const loadingOverlay = document.getElementById('loading-overlay');
+  const loadingText = document.getElementById('loading-text');
+  const progressBar = document.getElementById('loading-progress-bar');
+  const modelTitle = document.getElementById('model-title');
+  const statVerts = document.getElementById('stat-verts');
+  const statTris = document.getElementById('stat-tris');
+  const statMats = document.getElementById('stat-mats');
+  const toastEl = document.getElementById('toast');
+  const contextMenu = document.getElementById('context-menu');
+
+  // ---------------------------------------------------------------------------
+  // RENDERER
+  // ---------------------------------------------------------------------------
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    alpha: false,
+    powerPreference: 'high-performance',
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(container.clientWidth, container.clientHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  container.appendChild(renderer.domElement);
+
+  // CSS2 渲染器（标注用）
+  const labelRenderer = new CSS2DRenderer();
+  labelRenderer.setSize(container.clientWidth, container.clientHeight);
+  labelRenderer.domElement.style.position = 'absolute';
+  labelRenderer.domElement.style.top = '0';
+  labelRenderer.domElement.style.left = '0';
+  labelRenderer.domElement.style.pointerEvents = 'none';
+  container.appendChild(labelRenderer.domElement);
+
+  // ---------------------------------------------------------------------------
+  // SCENE
+  // ---------------------------------------------------------------------------
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x1a1a2e);
+
+  // ---------------------------------------------------------------------------
+  // CAMERA
+  // ---------------------------------------------------------------------------
+  const camera = new THREE.PerspectiveCamera(
+    45,
+    container.clientWidth / container.clientHeight,
+    0.1,
+    1000
+  );
+  camera.position.set(5, 4, 8);
+
+  // ---------------------------------------------------------------------------
+  // CONTROLS
+  // ---------------------------------------------------------------------------
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.minDistance = 0.5;
+  controls.maxDistance = 200;
+  controls.target.set(0, 0, 0);
+  controls.update();
+
+  // ---------------------------------------------------------------------------
+  // LIGHTING PRESETS
+  // ---------------------------------------------------------------------------
+  const lightGroup = new THREE.Group();
+  scene.add(lightGroup);
+
+  const lightingPresets = {};
+
+  // --- 影棚模式 (Studio) ---
+  function createStudioLights() {
+    const g = new THREE.Group();
+
+    // 环境光
+    const ambient = new THREE.AmbientLight(0x404060, 0.4);
+    g.add(ambient);
+
+    // 半球光
+    const hemi = new THREE.HemisphereLight(0x87ceeb, 0x362d59, 0.8);
+    g.add(hemi);
+
+    // 主光
+    const key = new THREE.DirectionalLight(0xffeedd, 2.5);
+    key.position.set(5, 8, 5);
+    key.castShadow = true;
+    key.shadow.mapSize.width = 1024;
+    key.shadow.mapSize.height = 1024;
+    key.shadow.camera.near = 0.5;
+    key.shadow.camera.far = 30;
+    key.shadow.camera.left = -8;
+    key.shadow.camera.right = 8;
+    key.shadow.camera.top = 8;
+    key.shadow.camera.bottom = -8;
+    key.shadow.bias = -0.001;
+    g.add(key);
+
+    // 补光
+    const fill = new THREE.DirectionalLight(0x4488ff, 0.6);
+    fill.position.set(-4, 2, 3);
+    g.add(fill);
+
+    // 背光
+    const rim = new THREE.DirectionalLight(0xffffff, 0.4);
+    rim.position.set(-2, 3, -6);
+    g.add(rim);
+
+    return g;
+  }
+
+  // --- 明亮模式 (Bright) ---
+  function createBrightLights() {
+    const g = new THREE.Group();
+    const ambient = new THREE.AmbientLight(0x8888cc, 0.6);
+    g.add(ambient);
+    const hemi = new THREE.HemisphereLight(0x87ceeb, 0x6b5b95, 1.2);
+    g.add(hemi);
+    const key = new THREE.DirectionalLight(0xffffff, 3.0);
+    key.position.set(3, 6, 4);
+    key.castShadow = true;
+    key.shadow.mapSize.width = 1024;
+    key.shadow.mapSize.height = 1024;
+    g.add(key);
+    const fill = new THREE.DirectionalLight(0x88bbff, 0.8);
+    fill.position.set(-3, 1, 2);
+    g.add(fill);
+    return g;
+  }
+
+  // --- 戏剧模式 (Dramatic) ---
+  function createDramaticLights() {
+    const g = new THREE.Group();
+    const ambient = new THREE.AmbientLight(0x222244, 0.15);
+    g.add(ambient);
+    const key = new THREE.DirectionalLight(0xff8844, 4.0);
+    key.position.set(6, 4, 2);
+    key.castShadow = true;
+    key.shadow.mapSize.width = 1024;
+    key.shadow.mapSize.height = 1024;
+    g.add(key);
+    const rim = new THREE.DirectionalLight(0x4488ff, 1.5);
+    rim.position.set(-4, 1, -5);
+    g.add(rim);
+    return g;
+  }
+
+  lightingPresets.studio = createStudioLights;
+  lightingPresets.bright = createBrightLights;
+  lightingPresets.dramatic = createDramaticLights;
+
+  // ---------------------------------------------------------------------------
+  // GROUND / ENVIRONMENT
+  // ---------------------------------------------------------------------------
+
+  // 地面 - 阴影接收
+  const groundGeo = new THREE.PlaneGeometry(40, 40);
+  const groundMat = new THREE.ShadowMaterial({
+    opacity: 0.4,
+    transparent: true,
+  });
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.01;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  // 地面网格辅助
+  const gridHelper = new THREE.GridHelper(20, 20, 0x444466, 0x333355);
+  gridHelper.position.y = 0;
+  scene.add(gridHelper);
+
+  // 坐标轴
+  const axesHelper = new THREE.AxesHelper(3);
+  axesHelper.position.y = 0;
+  scene.add(axesHelper);
+  state.showAxes = true;
+
+  // ---------------------------------------------------------------------------
+  // ENVIRONMENT MAP（程序化生成渐变环境贴图）
+  // ---------------------------------------------------------------------------
+  function generateEnvMap() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+
+    const gradient = ctx.createRadialGradient(256, 256, 0, 256, 256, 256);
+    gradient.addColorStop(0, '#2a2a4a');
+    gradient.addColorStop(0.4, '#1e1e3a');
+    gradient.addColorStop(0.7, '#16162a');
+    gradient.addColorStop(1, '#0a0a15');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 512, 512);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    pmremGenerator.compileEquirectangularShader();
+    const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+    texture.dispose();
+    pmremGenerator.dispose();
+    scene.environment = envMap;
+    return envMap;
+  }
+  generateEnvMap();
+
+  // ---------------------------------------------------------------------------
+  // MODEL LOADER
+  // ---------------------------------------------------------------------------
+  const loader = new GLTFLoader();
+  const dracoLoader = new DRACOLoader();
+  dracoLoader.setDecoderPath('https://unpkg.com/three@0.170.0/examples/jsm/libs/draco/');
+  loader.setDRACOLoader(dracoLoader);
+
+  function resetScene() {
+    // 移除旧模型
+    if (state.model) {
+      scene.remove(state.model);
+      state.model.traverse((child) => {
+        if (child.isMesh) {
+          child.geometry?.dispose();
+          if (Array.isArray(child.material)) {
+            child.material.forEach(m => m.dispose());
+          } else {
+            child.material?.dispose();
+          }
+        }
+      });
+    }
+    // 移除标注
+    state.annotations.forEach(a => scene.remove(a));
+    state.annotations = [];
+    // 重置动画
+    if (state.mixer) {
+      state.mixer.stopAllAction();
+      state.mixer = null;
+    }
+    state.animations = [];
+    state.model = null;
+    controls.target.set(0, 0, 0);
+  }
+
+  function fitCameraToModel(model, offset = 1.4) {
+    const box = new THREE.Box3().setFromObject(model);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    const distance = maxDim * offset;
+
+    controls.target.copy(center);
+
+    const dir = camera.position.clone().sub(controls.target).normalize();
+    if (dir.length() < 0.01) dir.set(1, 0.5, 1).normalize();
+    camera.position.copy(center).add(dir.multiplyScalar(distance));
+    camera.near = distance * 0.01;
+    camera.far = distance * 10;
+    camera.updateProjectionMatrix();
+    controls.update();
+  }
+
+  function countModelStats(model) {
+    let verts = 0, tris = 0, mats = new Set();
+    model.traverse((child) => {
+      if (child.isMesh) {
+        const geo = child.geometry;
+        if (geo.index) {
+          tris += geo.index.count / 3;
+        } else if (geo.attributes.position) {
+          tris += geo.attributes.position.count / 3;
+        }
+        verts += geo.attributes.position?.count || 0;
+        if (Array.isArray(child.material)) {
+          child.material.forEach(m => mats.add(m.name || m.type));
+        } else if (child.material) {
+          mats.add(child.material.name || child.material.type);
+        }
+      }
+    });
+    return {
+      verts: verts.toLocaleString(),
+      tris: Math.round(tris).toLocaleString(),
+      mats: mats.size,
+    };
+  }
+
+  function setLightingMode(mode) {
+    if (mode === 'wireframe') {
+      state.wireframeMode = !state.wireframeMode;
+      applyWireframe(state.wireframeMode);
+      return;
+    }
+
+    while (lightGroup.children.length) {
+      const child = lightGroup.children[0];
+      lightGroup.remove(child);
+    }
+
+    state.currentLighting = mode;
+    const fn = lightingPresets[mode];
+    if (fn) {
+      const newLights = fn();
+      while (newLights.children.length) {
+        lightGroup.add(newLights.children[0]);
+      }
+    }
+    renderer.toneMappingExposure = mode === 'dramatic' ? 1.4 : 1.0;
+  }
+
+  function applyWireframe(enabled) {
+    if (!state.model) return;
+    state.model.traverse((child) => {
+      if (child.isMesh) {
+        if (Array.isArray(child.material)) {
+          child.material.forEach(m => { m.wireframe = enabled; });
+        } else {
+          child.material.wireframe = enabled;
+        }
+      }
+    });
+  }
+
+  async function loadModel(url) {
+    loadingOverlay.classList.remove('hidden');
+    loadingText.textContent = '正在加载模型...';
+    progressBar.style.width = '0%';
+
+    resetScene();
+
+    // 提取文件名
+    const parts = url.split('/');
+    const fileName = parts[parts.length - 1] || '未知模型';
+    const ext = fileName.split('.').pop()?.toUpperCase() || 'GLB';
+    modelTitle.innerHTML = `${fileName} <span class="tag">${ext}</span>`;
+
+    try {
+      // 模拟加载进度
+      let prog = 0;
+      const progInterval = setInterval(() => {
+        prog = Math.min(prog + Math.random() * 15, 80);
+        progressBar.style.width = prog + '%';
+      }, 300);
+
+      const gltf = await loader.loadAsync(url, (xhr) => {
+        if (xhr.total > 0) {
+          const pct = Math.round((xhr.loaded / xhr.total) * 80);
+          progressBar.style.width = pct + '%';
+        }
+      });
+
+      clearInterval(progInterval);
+      progressBar.style.width = '100%';
+
+      const model = gltf.scene;
+      state.model = model;
+      state.animations = gltf.animations || [];
+
+      // 设置阴影
+      model.traverse((child) => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+
+      scene.add(model);
+
+      // 适配相机
+      fitCameraToModel(model);
+
+      // 统计
+      const stats = countModelStats(model);
+      statVerts.textContent = stats.verts;
+      statTris.textContent = stats.tris;
+      statMats.textContent = stats.mats;
+
+      // 播放动画
+      if (state.animations.length > 0) {
+        state.mixer = new THREE.AnimationMixer(model);
+        const action = state.mixer.clipAction(state.animations[0]);
+        action.play();
+        loadingText.textContent = `模型加载完成，含 ${state.animations.length} 个动画`;
+      } else {
+        loadingText.textContent = '模型加载完成';
+      }
+
+      state.modelName = fileName;
+
+      setTimeout(() => {
+        loadingOverlay.classList.add('hidden');
+      }, 600);
+
+      showToast(`模型 "${fileName}" 加载成功`);
+      return model;
+    } catch (err) {
+      clearInterval(window._progInterval);
+      progressBar.style.width = '0%';
+      loadingText.textContent = `加载失败: ${err.message}`;
+      modelTitle.innerHTML = `加载失败 <span class="tag" style="background:rgba(239,68,68,0.3);color:#ef4444;">ERROR</span>`;
+      showToast('模型加载失败: ' + err.message, true);
+      console.error(err);
+      return null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // ANNOTATIONS (标注系统)
+  // ---------------------------------------------------------------------------
+  function createAnnotation(position, text, color = '#818cf8') {
+    const div = document.createElement('div');
+    div.textContent = text;
+    div.style.cssText = `
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(8px);
+      color: #fff;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      border: 1px solid ${color};
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      pointer-events: none;
+      white-space: nowrap;
+    `;
+
+    // 小圆点
+    const dotDiv = document.createElement('div');
+    dotDiv.style.cssText = `
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: ${color};
+      border: 2px solid rgba(255,255,255,0.3);
+      box-shadow: 0 0 12px ${color};
+      position: absolute;
+      left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+    `;
+    div.appendChild(dotDiv);
+
+    const label = new CSS2DObject(div);
+    label.position.copy(position);
+    state.annotations.push(label);
+    scene.add(label);
+    return label;
+  }
+
+  // ---------------------------------------------------------------------------
+  // SCREENSHOT
+  // ---------------------------------------------------------------------------
+  function takeScreenshot() {
+    if (!state.model) {
+      showToast('没有模型可供截图', true);
+      return;
+    }
+    renderer.render(scene, camera);
+    const link = document.createElement('a');
+    link.download = `${state.modelName || 'screenshot'}.png`;
+    link.href = renderer.domElement.toDataURL('image/png');
+    link.click();
+    showToast('截图已保存');
+  }
+
+  // ---------------------------------------------------------------------------
+  // TOAST
+  // ---------------------------------------------------------------------------
+  let toastTimer = null;
+
+  function showToast(msg, isError = false) {
+    toastEl.textContent = msg;
+    toastEl.style.color = isError ? '#ef4444' : '#e0e0e0';
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toastEl.classList.remove('show');
+    }, 2500);
+  }
+
+  // ---------------------------------------------------------------------------
+  // DRAG & DROP
+  // ---------------------------------------------------------------------------
+  container.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    container.style.outline = '2px solid #818cf8';
+  });
+  container.addEventListener('dragleave', () => {
+    container.style.outline = 'none';
+  });
+  container.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    container.style.outline = 'none';
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      const file = files[0];
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      if (['glb', 'gltf', 'obj', 'stl'].includes(ext)) {
+        const url = URL.createObjectURL(file);
+        await loadModel(url);
+      } else {
+        showToast('不支持的文件格式，请使用 GLB/GLTF', true);
+      }
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // RESIZE
+  // ---------------------------------------------------------------------------
+  function onResize() {
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+    renderer.setSize(w, h);
+    labelRenderer.setSize(w, h);
+  }
+  window.addEventListener('resize', onResize);
+
+  // ---------------------------------------------------------------------------
+  // FULLSCREEN
+  // ---------------------------------------------------------------------------
+  document.getElementById('btn-fullscreen').addEventListener('click', () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      document.body.requestFullscreen();
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // RESET VIEW
+  // ---------------------------------------------------------------------------
+  document.getElementById('btn-reset').addEventListener('click', () => {
+    if (state.model) {
+      fitCameraToModel(state.model);
+      showToast('视角已重置');
+    } else {
+      camera.position.set(5, 4, 8);
+      controls.target.set(0, 0, 0);
+      controls.update();
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // LOAD MODEL BUTTON
+  // ---------------------------------------------------------------------------
+  document.getElementById('btn-load').addEventListener('click', () => {
+    document.getElementById('load-modal').classList.add('show');
+  });
+
+  // ---------------------------------------------------------------------------
+  // LOAD FROM INPUT
+  // ---------------------------------------------------------------------------
+  window.loadModelFromInput = async function() {
+    const url = document.getElementById('model-url').value.trim();
+    if (!url) {
+      showToast('请输入模型 URL', true);
+      return;
+    }
+    document.getElementById('load-modal').classList.remove('show');
+    await loadModel(url);
+  };
+
+  // ---------------------------------------------------------------------------
+  // LIGHTING SWITCH
+  // ---------------------------------------------------------------------------
+  document.querySelectorAll('[data-lighting]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.lighting;
+
+      // 更新按钮状态
+      document.querySelectorAll('[data-lighting]').forEach(b => b.classList.remove('active'));
+
+      if (mode === 'wireframe') {
+        btn.classList.toggle('active');
+        setLightingMode('wireframe');
+        showToast(state.wireframeMode ? '线框模式' : '实体模式');
+        return;
+      }
+
+      btn.classList.add('active');
+      setLightingMode(mode);
+    });
+  });
+
+  // 默认激活影棚模式
+  document.querySelector('[data-lighting="studio"]').classList.add('active');
+  setLightingMode('studio');
+
+  // ---------------------------------------------------------------------------
+  // CONTEXT MENU
+  // ---------------------------------------------------------------------------
+  container.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    contextMenu.style.left = e.clientX + 'px';
+    contextMenu.style.top = e.clientY + 'px';
+    contextMenu.style.display = 'block';
+  });
+
+  document.addEventListener('click', () => {
+    contextMenu.style.display = 'none';
+  });
+
+  contextMenu.querySelectorAll('.menu-item').forEach((item) => {
+    item.addEventListener('click', () => {
+      const action = item.dataset.action;
+      switch (action) {
+        case 'screenshot': takeScreenshot(); break;
+        case 'reset':
+          document.getElementById('btn-reset').click();
+          break;
+        case 'wireframe':
+          state.wireframeMode = !state.wireframeMode;
+          applyWireframe(state.wireframeMode);
+          showToast(state.wireframeMode ? '线框模式' : '实体模式');
+          break;
+        case 'axes':
+          state.showAxes = !state.showAxes;
+          axesHelper.visible = state.showAxes;
+          showToast(state.showAxes ? '显示坐标轴' : '隐藏坐标轴');
+          break;
+      }
+      contextMenu.style.display = 'none';
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // KEYBOARD SHORTCUTS
+  // ---------------------------------------------------------------------------
+  document.addEventListener('keydown', (e) => {
+    // R = 重置
+    if (e.key === 'r' && !e.ctrlKey && !e.metaKey) {
+      document.getElementById('btn-reset').click();
+    }
+    // F = 全屏
+    if (e.key === 'f' && !e.ctrlKey && !e.metaKey) {
+      document.getElementById('btn-fullscreen').click();
+    }
+    // W = 线框
+    if (e.key === 'w' && !e.ctrlKey && !e.metaKey) {
+      state.wireframeMode = !state.wireframeMode;
+      applyWireframe(state.wireframeMode);
+      showToast(state.wireframeMode ? '线框模式' : '实体模式');
+    }
+    // Escape 关闭弹窗
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.modal-overlay.show').forEach(m => m.classList.remove('show'));
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // LOAD DEMO MODEL (default)
+  // ---------------------------------------------------------------------------
+
+  // 默认加载一个公开 GLB 作为演示
+  // 使用 Khronos 官方示例模型
+  const defaultModel = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/main/2.0/DamagedHelmet/glTF-Binary/DamagedHelmet.glb';
+
+  setTimeout(() => loadModel(defaultModel), 500);
+
+  // ---------------------------------------------------------------------------
+  // ANIMATION LOOP
+  // ---------------------------------------------------------------------------
+  function animate() {
+    requestAnimationFrame(animate);
+
+    const delta = state.clock.getDelta();
+    if (state.mixer) {
+      state.mixer.update(delta);
+    }
+
+    controls.update();
+
+    // 先渲染主场景
+    renderer.render(scene, camera);
+    // 再渲染 CSS 标注（置于顶层）
+    labelRenderer.render(scene, camera);
+  }
+  animate();
+
+  // ---------------------------------------------------------------------------
+  // CONSOLE HELP
+  // ---------------------------------------------------------------------------
+  console.log('%c 3D Viewer Loaded ', 'background:#6366f1;color:#fff;padding:4px 8px;border-radius:4px;');
+  console.log('可用方法:');
+  console.log('  loadModel(url)  - 加载模型');
+  console.log('  takeScreenshot() - 截图');
+  console.log('  createAnnotation(pos, text) - 添加标注');
+  console.log('快捷键: R=重置视角  F=全屏  W=线框');
+
+  </script>
+</body>
+</html>

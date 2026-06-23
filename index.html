@@ -1,0 +1,876 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>3D Viewer · STL / GLB / OBJ</title>
+<style>
+  :root{
+    --bg:#0e1116;
+    --panel:rgba(20,24,31,.82);
+    --panel-border:rgba(255,255,255,.08);
+    --text:#e6e8eb;
+    --muted:#8a93a3;
+    --accent:#5cc8ff;
+    --accent-2:#7c5cff;
+    --shadow:0 10px 30px rgba(0,0,0,.45);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",PingFang SC,Helvetica,Arial,sans-serif;overflow:hidden;-webkit-font-smoothing:antialiased}
+  #app{position:fixed;inset:0}
+  canvas{display:block;width:100%;height:100%;touch-action:none;outline:none}
+
+  /* Top bar */
+  .topbar{position:fixed;top:14px;left:14px;right:14px;display:flex;align-items:center;gap:10px;z-index:10;pointer-events:none}
+  .brand{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--panel-border);padding:8px 14px;border-radius:12px;box-shadow:var(--shadow);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);pointer-events:auto;font-weight:600;letter-spacing:.3px}
+  .brand .dot{width:10px;height:10px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-2));box-shadow:0 0 12px var(--accent)}
+  .brand .name{font-size:13px}
+  .brand .ver{color:var(--muted);font-size:11px;margin-left:4px}
+
+  .top-actions{margin-left:auto;display:flex;gap:8px;pointer-events:auto}
+  .btn{appearance:none;border:1px solid var(--panel-border);background:var(--panel);color:var(--text);padding:8px 14px;border-radius:10px;font-size:12.5px;font-weight:500;cursor:pointer;transition:all .15s ease;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:var(--shadow);display:inline-flex;align-items:center;gap:6px}
+  .btn:hover{background:rgba(40,46,58,.92);border-color:rgba(255,255,255,.16);transform:translateY(-1px)}
+  .btn:active{transform:translateY(0)}
+  .btn.primary{background:linear-gradient(135deg,var(--accent),var(--accent-2));border-color:transparent;color:#0b0d12;font-weight:600}
+  .btn.primary:hover{filter:brightness(1.08)}
+  .btn .ic{width:14px;height:14px;display:inline-flex;align-items:center;justify-content:center}
+  .btn svg{width:14px;height:14px}
+
+  /* Info panel */
+  .info{position:fixed;left:14px;bottom:14px;min-width:240px;max-width:300px;background:var(--panel);border:1px solid var(--panel-border);border-radius:14px;box-shadow:var(--shadow);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:14px 16px;z-index:10;font-size:12px}
+  .info h3{margin:0 0 8px 0;font-size:12px;color:var(--muted);font-weight:500;letter-spacing:.8px;text-transform:uppercase}
+  .info .row{display:flex;justify-content:space-between;padding:4px 0;border-top:1px dashed rgba(255,255,255,.06)}
+  .info .row:first-of-type{border-top:none}
+  .info .k{color:var(--muted)}
+  .info .v{font-variant-numeric:tabular-nums;color:var(--text);font-weight:500}
+  .info .file{margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.08);font-size:11px;color:var(--muted);word-break:break-all}
+
+  /* Controls panel */
+  .controls{position:fixed;right:14px;bottom:392px;background:var(--panel);border:1px solid var(--panel-border);border-radius:14px;box-shadow:var(--shadow);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:12px 14px;z-index:10;display:flex;flex-direction:column;gap:10px;min-width:200px}
+  .ctrl-row{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12.5px}
+  .ctrl-row .label{color:var(--muted);display:flex;align-items:center;gap:6px}
+  .ctrl-row .label svg{width:14px;height:14px;opacity:.8}
+  /* iOS-style switch */
+  .switch{position:relative;width:36px;height:20px;background:#2a3140;border-radius:999px;cursor:pointer;transition:background .2s;flex-shrink:0}
+  .switch::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#e6e8eb;transition:left .2s}
+  .switch.on{background:linear-gradient(135deg,var(--accent),var(--accent-2))}
+  .switch.on::after{left:18px}
+  /* color swatches */
+  .swatches{display:flex;gap:6px}
+  .sw{width:18px;height:18px;border-radius:5px;border:1px solid rgba(255,255,255,.12);cursor:pointer;transition:transform .15s,border-color .15s}
+  .sw:hover{transform:scale(1.12)}
+  .sw.active{border-color:#fff;box-shadow:0 0 0 2px var(--accent)}
+  .sw.s1{background:#0e1116}
+  .sw.s2{background:#f4f5f7}
+  .sw.s3{background:#3a3f4b}
+  .sw.s4{background:linear-gradient(135deg,#1a2a44,#0e1116)}
+
+  /* Help / shortcuts — top-center, just under the topbar */
+  .help{position:fixed;left:50%;top:66px;transform:translateX(-50%);background:var(--panel);border:1px solid var(--panel-border);border-radius:12px;box-shadow:var(--shadow);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);padding:8px 14px;z-index:10;font-size:11.5px;color:var(--muted);max-width:none;white-space:nowrap;display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center}
+  .help b{color:var(--text);font-weight:600;margin-right:2px}
+  .help .k{display:inline-block;padding:1px 6px;background:rgba(255,255,255,.08);border-radius:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;color:var(--text);margin:0 1px}
+
+  /* Pose / Transform panel (right side, above controls) */
+  .extras{position:fixed;right:14px;bottom:14px;width:240px;background:var(--panel);border:1px solid var(--panel-border);border-radius:14px;box-shadow:var(--shadow);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);z-index:10;display:flex;flex-direction:column;font-size:12px}
+  .extras-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.06);cursor:pointer;user-select:none}
+  .extras-head h3{margin:0;font-size:11.5px;color:var(--muted);font-weight:500;letter-spacing:.8px;text-transform:uppercase}
+  .extras-head .caret{width:14px;height:14px;transition:transform .2s;color:var(--muted)}
+  .extras.collapsed .extras-head .caret{transform:rotate(-90deg)}
+  .extras-body{padding:10px 12px 12px;display:flex;flex-direction:column;gap:12px;max-height:520px;overflow:hidden;transition:max-height .25s ease, padding .25s ease, opacity .2s}
+  .extras.collapsed .extras-body{max-height:0;padding-top:0;padding-bottom:0;opacity:0;pointer-events:none}
+  /* Flip button row */
+  .flip-row{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+  .flip-btn{appearance:none;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);color:var(--text);padding:8px 0;border-radius:8px;cursor:pointer;font-size:14px;line-height:1;transition:all .15s;display:flex;align-items:center;justify-content:center}
+  .flip-btn:hover{background:rgba(92,200,255,.15);border-color:rgba(92,200,255,.4);color:var(--accent)}
+  .flip-btn:active{transform:scale(.95)}
+  .flip-btn svg{width:14px;height:14px}
+  /* Slider row */
+  .slider-row{display:flex;flex-direction:column;gap:4px}
+  .slider-row .top{display:flex;justify-content:space-between;align-items:baseline;font-size:11.5px}
+  .slider-row .top .ax{color:var(--muted);font-weight:500}
+  .slider-row .top .val{color:var(--text);font-variant-numeric:tabular-nums;font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .slider-row input[type=range]{width:100%;height:4px;-webkit-appearance:none;appearance:none;background:rgba(255,255,255,.08);border-radius:2px;outline:none;cursor:pointer}
+  .slider-row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-2));border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:pointer;transition:transform .1s}
+  .slider-row input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.15)}
+  .slider-row input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent-2));border:2px solid #fff;cursor:pointer}
+  .slider-row input[type=range]::-moz-range-track{height:4px;background:rgba(255,255,255,.08);border-radius:2px}
+  .group-title{font-size:10.5px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;margin:0 0 2px 0;font-weight:500}
+
+  /* Loading overlay */
+  .loader{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(14,17,22,.85);z-index:100;transition:opacity .3s}
+  .loader.hide{opacity:0;pointer-events:none}
+  .loader-inner{display:flex;flex-direction:column;align-items:center;gap:14px}
+  .spinner{width:42px;height:42px;border:3px solid rgba(255,255,255,.08);border-top-color:var(--accent);border-right-color:var(--accent-2);border-radius:50%;animation:spin .9s linear infinite}
+  .loader-text{font-size:13px;color:var(--muted);letter-spacing:.3px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* Drop overlay */
+  .drop{position:fixed;inset:0;background:rgba(14,17,22,.7);border:3px dashed var(--accent);border-radius:24px;display:none;align-items:center;justify-content:center;z-index:90;pointer-events:none;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);margin:14px}
+  .drop.show{display:flex}
+  .drop-inner{text-align:center;color:var(--text)}
+  .drop-inner .big{font-size:24px;font-weight:600;margin-bottom:6px}
+  .drop-inner .sub{font-size:13px;color:var(--muted)}
+
+  /* Error toast */
+  .toast{position:fixed;top:70px;left:50%;transform:translateX(-50%) translateY(-20px);background:#2a1a1f;border:1px solid #ff5577;color:#ffb3c1;padding:10px 16px;border-radius:10px;font-size:13px;box-shadow:var(--shadow);opacity:0;transition:all .3s;z-index:200;pointer-events:none;max-width:80vw}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  @media (max-width:640px){
+    .info,.help,.extras{display:none}
+    .controls{right:8px;bottom:8px;min-width:160px;padding:10px;font-size:12px}
+    .topbar{left:8px;right:8px;top:8px}
+    .btn{padding:7px 10px;font-size:11.5px}
+    .brand .ver{display:none}
+  }
+</style>
+</head>
+<body>
+
+<div id="app"></div>
+
+<div class="topbar">
+  <div class="brand">
+    <span class="dot"></span>
+    <span class="name">3D Viewer</span>
+    <span class="ver">v1.0</span>
+  </div>
+  <div class="top-actions">
+    <button class="btn" id="btn-reset" title="重置视角 (R)">
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></span>
+      重置视角
+    </button>
+    <button class="btn primary" id="btn-open" title="打开文件">
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>
+      打开文件
+    </button>
+    <input type="file" id="file-input" accept=".stl,.glb,.gltf,.obj,.ply,.fbx,.3ds" style="display:none" />
+  </div>
+</div>
+
+<div class="info" id="info">
+  <h3>模型信息</h3>
+  <div class="row"><span class="k">顶点数</span><span class="v" id="i-verts">—</span></div>
+  <div class="row"><span class="k">三角面</span><span class="v" id="i-tris">—</span></div>
+  <div class="row"><span class="k">尺寸 (mm)</span><span class="v" id="i-size">—</span></div>
+  <div class="row"><span class="k">FPS</span><span class="v" id="i-fps">—</span></div>
+  <div class="file" id="i-file">未加载文件</div>
+</div>
+
+<div class="controls">
+  <div class="ctrl-row">
+    <span class="label">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      自动旋转
+    </span>
+    <div class="switch on" id="t-auto"></div>
+  </div>
+  <div class="ctrl-row">
+    <span class="label">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/><line x1="12" y1="22" x2="12" y2="15.5"/><polyline points="22 8.5 12 15.5 2 8.5"/></svg>
+      线框模式
+    </span>
+    <div class="switch" id="t-wire"></div>
+  </div>
+  <div class="ctrl-row">
+    <span class="label">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+      显示网格
+    </span>
+    <div class="switch on" id="t-grid"></div>
+  </div>
+  <div class="ctrl-row">
+    <span class="label">背景</span>
+    <div class="swatches">
+      <div class="sw s1 active" data-bg="#0e1116" title="深色"></div>
+      <div class="sw s2" data-bg="#f4f5f7" title="浅色"></div>
+      <div class="sw s3" data-bg="#3a3f4b" title="灰色"></div>
+      <div class="sw s4" data-bg="gradient" title="渐变"></div>
+    </div>
+  </div>
+</div>
+
+<div class="extras" id="extras">
+  <div class="extras-head" id="extras-head">
+    <h3>位置 & 姿态</h3>
+    <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+  </div>
+  <div class="extras-body">
+    <div>
+      <p class="group-title">快速翻转 180°</p>
+      <div class="flip-row">
+        <button class="flip-btn" id="flip-x" title="X 轴 180° (前后翻转)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 8l-4 4 4 4"/><path d="M16 8l4 4-4 4"/></svg>
+        </button>
+        <button class="flip-btn" id="flip-y" title="Y 轴 180° (上下翻转)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18"/><path d="M8 8l-4 4 4 4"/><path d="M16 8l4 4-4 4"/></svg>
+        </button>
+        <button class="flip-btn" id="flip-z" title="Z 轴 180° (左右翻转)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l-4 4h8z"/><path d="M12 21l-4-4h8z"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
+        </button>
+        <button class="flip-btn" id="flip-floor" title="放平到地面 (自动检测最长轴躺平)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="13" width="18" height="8" rx="1"/><path d="M7 13V8a5 5 0 0 1 10 0v5"/></svg>
+        </button>
+        <button class="flip-btn" id="flip-reset" title="重置位置 / 旋转">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div>
+      <p class="group-title">位置 (mm)</p>
+      <div class="slider-row">
+        <div class="top"><span class="ax">X 偏移</span><span class="val" id="v-tx">0.0</span></div>
+        <input type="range" id="s-tx" min="-200" max="200" step="0.5" value="0" />
+      </div>
+      <div class="slider-row" style="margin-top:6px">
+        <div class="top"><span class="ax">Y 高度</span><span class="val" id="v-ty">0.0</span></div>
+        <input type="range" id="s-ty" min="-50" max="200" step="0.5" value="0" />
+      </div>
+      <div class="slider-row" style="margin-top:6px">
+        <div class="top"><span class="ax">Z 偏移</span><span class="val" id="v-tz">0.0</span></div>
+        <input type="range" id="s-tz" min="-200" max="200" step="0.5" value="0" />
+      </div>
+    </div>
+
+    <div>
+      <p class="group-title">旋转 (°)</p>
+      <div class="slider-row">
+        <div class="top"><span class="ax">X 轴</span><span class="val" id="v-rx">0</span></div>
+        <input type="range" id="s-rx" min="-180" max="180" step="1" value="0" />
+      </div>
+      <div class="slider-row" style="margin-top:6px">
+        <div class="top"><span class="ax">Y 轴</span><span class="val" id="v-ry">0</span></div>
+        <input type="range" id="s-ry" min="-180" max="180" step="1" value="0" />
+      </div>
+      <div class="slider-row" style="margin-top:6px">
+        <div class="top"><span class="ax">Z 轴</span><span class="val" id="v-rz">0</span></div>
+        <input type="range" id="s-rz" min="-180" max="180" step="1" value="0" />
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="help">
+  <b>操作提示</b><br/>
+  <span class="k">拖拽</span> 旋转视角<br/>
+  <span class="k">滚轮</span> 缩放<br/>
+  <span class="k">右键</span> 平移<br/>
+  <span class="k">双击</span> 720° 翻转<br/>
+  <span class="k">R</span> 重置视角 · <span class="k">Space</span> 自转<br/>
+  <span class="k">W</span> 线框 · <span class="k">G</span> 网格<br/>
+  右下「位置 & 姿态」可调
+</div>
+
+<div class="drop" id="drop">
+  <div class="drop-inner">
+    <div class="big">松开鼠标加载模型</div>
+    <div class="sub">支持 STL / GLB / GLTF / OBJ / PLY</div>
+  </div>
+</div>
+
+<div class="loader" id="loader">
+  <div class="loader-inner">
+    <div class="spinner"></div>
+    <div class="loader-text" id="loader-text">正在加载模型…</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Three.js r160 本地化: importmap 把 bare specifier 'three' 指向本地 js/three.module.js -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./js/three.module.js",
+    "three/addons/": "./js/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { STLLoader }     from 'three/addons/loaders/STLLoader.js';
+import { GLTFLoader }    from 'three/addons/loaders/GLTFLoader.js';
+import { OBJLoader }     from 'three/addons/loaders/OBJLoader.js';
+import { PLYLoader }     from 'three/addons/loaders/PLYLoader.js';
+
+// ---------- DOM ----------
+const $app       = document.getElementById('app');
+const $loader    = document.getElementById('loader');
+const $loaderTxt = document.getElementById('loader-text');
+const $drop      = document.getElementById('drop');
+const $toast     = document.getElementById('toast');
+const $btnOpen   = document.getElementById('btn-open');
+const $btnReset  = document.getElementById('btn-reset');
+const $fileInp   = document.getElementById('file-input');
+const $iVerts    = document.getElementById('i-verts');
+const $iTris     = document.getElementById('i-tris');
+const $iSize     = document.getElementById('i-size');
+const $iFps      = document.getElementById('i-fps');
+const $iFile     = document.getElementById('i-file');
+const $tAuto     = document.getElementById('t-auto');
+const $tWire     = document.getElementById('t-wire');
+const $tGrid     = document.getElementById('t-grid');
+// Extras panel (pose / transform)
+const $extras    = document.getElementById('extras');
+const $flipX     = document.getElementById('flip-x');
+const $flipY     = document.getElementById('flip-y');
+const $flipZ     = document.getElementById('flip-z');
+const $flipFloor = document.getElementById('flip-floor');
+const $flipReset = document.getElementById('flip-reset');
+const sliders = {
+  tx: { inp: document.getElementById('s-tx'), val: document.getElementById('v-tx') },
+  ty: { inp: document.getElementById('s-ty'), val: document.getElementById('v-ty') },
+  tz: { inp: document.getElementById('s-tz'), val: document.getElementById('v-tz') },
+  rx: { inp: document.getElementById('s-rx'), val: document.getElementById('v-rx') },
+  ry: { inp: document.getElementById('s-ry'), val: document.getElementById('v-ry') },
+  rz: { inp: document.getElementById('s-rz'), val: document.getElementById('v-rz') },
+};
+
+// ---------- Three.js scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+$app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e1116);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 5000);
+camera.position.set(120, 120, 120);
+
+// Lights
+const hemi = new THREE.HemisphereLight(0xb1c5ff, 0x2a1f00, 0.55);
+scene.add(hemi);
+
+const key = new THREE.DirectionalLight(0xffffff, 1.1);
+key.position.set(80, 120, 60);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.near = 1;
+key.shadow.camera.far = 600;
+key.shadow.camera.left   = -150;
+key.shadow.camera.right  =  150;
+key.shadow.camera.top    =  150;
+key.shadow.camera.bottom = -150;
+key.shadow.bias = -0.0002;
+scene.add(key);
+
+const rim = new THREE.DirectionalLight(0x7c5cff, 0.45);
+rim.position.set(-100, 40, -80);
+scene.add(rim);
+
+const fill = new THREE.DirectionalLight(0x5cc8ff, 0.25);
+fill.position.set(60, 30, 100);
+scene.add(fill);
+
+// Grid
+const grid = new THREE.GridHelper(400, 40, 0x4a5260, 0x2a3140);
+grid.material.transparent = true;
+grid.material.opacity = 0.5;
+scene.add(grid);
+
+// Shadow plane (catches shadow nicely)
+const shadowGeo = new THREE.PlaneGeometry(600, 600);
+const shadowMat = new THREE.ShadowMaterial({ opacity: 0.35 });
+const shadowPlane = new THREE.Mesh(shadowGeo, shadowMat);
+shadowPlane.rotation.x = -Math.PI / 2;
+shadowPlane.position.y = -0.01;
+shadowPlane.receiveShadow = true;
+scene.add(shadowPlane);
+
+// Controls
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.rotateSpeed   = 0.9;
+controls.zoomSpeed     = 1.1;
+controls.panSpeed      = 0.8;
+controls.minDistance   = 1;
+controls.maxDistance   = 2500;
+controls.target.set(0, 0, 0);
+// Note: rotateLeft/rotateUp are unbounded — supports 720°+ rotation natively.
+
+// ---------- State ----------
+let currentModel = null;
+let modelContainer = new THREE.Group();
+scene.add(modelContainer);
+
+const state = {
+  autoRotate: true,
+  wireframe:  false,
+  showGrid:   true,
+  spin720:    false,
+  initialCam: { pos: new THREE.Vector3(120,120,120), target: new THREE.Vector3(0,0,0) },
+  // User-driven model transform (sliders / flip buttons)
+  userRotX: 0, userRotY: 0, userRotZ: 0,
+  userPosX: 0, userPosY: 0, userPosZ: 0,
+  // Animation-driven extra Y rotation (only used by 720° dblclick)
+  extraRotY: 0,
+};
+
+// Apply state to controls
+controls.autoRotate = state.autoRotate;
+controls.autoRotateSpeed = 1.4;
+
+// ---------- Helpers ----------
+function setLoading(on, msg='正在加载模型…'){
+  $loaderTxt.textContent = msg;
+  $loader.classList.toggle('hide', !on);
+}
+
+function toast(msg, ms=2600){
+  $toast.textContent = msg;
+  $toast.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=>$toast.classList.remove('show'), ms);
+}
+
+function disposeModel(){
+  if (!currentModel) return;
+  modelContainer.remove(currentModel);
+  currentModel.traverse(o => {
+    if (o.isMesh){
+      o.geometry?.dispose?.();
+      const m = o.material;
+      if (Array.isArray(m)) m.forEach(x=>x.dispose?.());
+      else m?.dispose?.();
+    }
+  });
+  currentModel = null;
+}
+
+function applyMaterial(model, isSolid=true){
+  const targetMat = state.wireframe
+    ? new THREE.MeshBasicMaterial({ color: 0x5cc8ff, wireframe: true })
+    : new THREE.MeshStandardMaterial({
+        color: 0xcfd6e4,
+        metalness: 0.35,
+        roughness: 0.45,
+        flatShading: false,
+      });
+
+  model.traverse(o => {
+    if (o.isMesh){
+      o.castShadow = true;
+      o.receiveShadow = true;
+      if (isSolid){
+        // If model already has materials (GLB/OBJ), keep them.
+        if (!o.material || (Array.isArray(o.material) && !o.material.length)){
+          o.material = targetMat;
+        } else if (!Array.isArray(o.material)){
+          // Force single castShadow state for existing material
+        }
+      } else {
+        o.material = targetMat;
+      }
+    }
+  });
+}
+
+function frameModel(model){
+  const box = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+
+  // Move model so its base sits at y=0 (typical for 3D prints)
+  const minY = box.min.y;
+  model.position.x -= center.x;
+  model.position.z -= center.z;
+  model.position.y -= minY;
+  // container also shifts
+  modelContainer.position.set(0, 0, 0);
+
+  // Recompute bounds after recenter
+  const box2 = new THREE.Box3().setFromObject(modelContainer);
+  const size2 = new THREE.Vector3();
+  box2.getSize(size2);
+
+  // Camera fit
+  const maxDim = Math.max(size2.x, size2.y, size2.z) || 100;
+  const fov = camera.fov * (Math.PI / 180);
+  const dist = (maxDim / 2) / Math.tan(fov / 2) * 1.6;
+
+  state.initialCam.pos.set(dist, dist * 0.75, dist);
+  state.initialCam.target.set(0, size2.y / 2, 0);
+  resetView();
+
+  // Stats
+  let verts = 0, tris = 0;
+  modelContainer.traverse(o => {
+    if (o.isMesh && o.geometry){
+      const g = o.geometry;
+      const pos = g.attributes?.position;
+      if (pos){
+        verts += pos.count;
+        if (g.index) tris += g.index.count / 3;
+        else if (pos.count) tris += pos.count / 3;
+      }
+    }
+  });
+  $iVerts.textContent = verts.toLocaleString();
+  $iTris.textContent  = tris.toLocaleString();
+  $iSize.textContent  = `${size2.x.toFixed(1)} × ${size2.y.toFixed(1)} × ${size2.z.toFixed(1)}`;
+}
+
+function resetView(){
+  camera.position.copy(state.initialCam.pos);
+  controls.target.copy(state.initialCam.target);
+  controls.update();
+}
+
+// ---------- Transform helpers (modelContainer pose/position) ----------
+const DEG = Math.PI / 180;
+
+function applyTransformToModel(){
+  // rotation: user-driven + animation-driven extra (720° spin)
+  modelContainer.rotation.x = state.userRotX;
+  modelContainer.rotation.y = state.userRotY + state.extraRotY;
+  modelContainer.rotation.z = state.userRotZ;
+  // position: user-driven
+  modelContainer.position.x = state.userPosX;
+  modelContainer.position.y = state.userPosY;
+  modelContainer.position.z = state.userPosZ;
+}
+
+function applyTransformToUI(){
+  const map = {
+    tx: state.userPosX, ty: state.userPosY, tz: state.userPosZ,
+    rx: state.userRotX / DEG, ry: state.userRotY / DEG, rz: state.userRotZ / DEG,
+  };
+  for (const k in sliders){
+    sliders[k].inp.value = String(map[k]);
+    sliders[k].val.textContent = (k.startsWith('r') ? Math.round(map[k]) : map[k].toFixed(1));
+  }
+}
+
+function resetTransform(){
+  state.userRotX = state.userRotY = state.userRotZ = 0;
+  state.userPosX = state.userPosY = state.userPosZ = 0;
+  state.extraRotY = 0;
+  applyTransformToModel();
+  applyTransformToUI();
+  toast('已重置位置 / 姿态');
+}
+
+function setBackground(spec){
+  if (spec === 'gradient'){
+    const c = document.createElement('canvas');
+    c.width = 16; c.height = 256;
+    const ctx = c.getContext('2d');
+    const g = ctx.createLinearGradient(0,0,0,256);
+    g.addColorStop(0, '#1a2a44');
+    g.addColorStop(1, '#0e1116');
+    ctx.fillStyle = g; ctx.fillRect(0,0,16,256);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    scene.background = tex;
+  } else {
+    scene.background = new THREE.Color(spec);
+  }
+}
+
+// ---------- Loaders ----------
+function pickLoader(filename, isGLTFBuffer=false){
+  const ext = filename.split('.').pop().toLowerCase();
+  if (ext === 'stl') return { ext, loader: STLLoader, post: meshToGroup };
+  if (ext === 'glb' || ext === 'gltf') return { ext, loader: GLTFLoader, post: gltfToGroup };
+  if (ext === 'obj') return { ext, loader: OBJLoader, post: objToGroup };
+  if (ext === 'ply') return { ext, loader: PLYLoader, post: plyToGroup };
+  return null;
+}
+
+function meshToGroup(geom){ return new THREE.Mesh(geom, null); }
+
+function gltfToGroup(gltf){ return gltf.scene; }
+
+function objToGroup(obj){
+  obj.traverse(o => {
+    if (o.isMesh && !o.material){
+      o.material = new THREE.MeshStandardMaterial({ color: 0xcfd6e4, metalness:0.3, roughness:0.5 });
+    }
+  });
+  return obj;
+}
+
+function plyToGroup(geom){
+  geom.computeVertexNormals();
+  return new THREE.Mesh(geom, null);
+}
+
+function loadFromUrl(url, filename){
+  setLoading(true, `正在加载 ${filename} …`);
+  fetch(url).then(r => {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.arrayBuffer();
+  }).then(buf => loadFromBuffer(buf, filename, url))
+    .catch(err => {
+      console.error(err);
+      setLoading(false);
+      toast('加载失败: ' + err.message);
+    });
+}
+
+function loadFromBuffer(buf, filename, srcUrl=null){
+  setLoading(true, `正在解析 ${filename} …`);
+  try{
+    const picked = pickLoader(filename);
+    if (!picked) throw new Error('不支持的文件格式: ' + filename);
+
+    let obj;
+    if (picked.ext === 'glb' || picked.ext === 'gltf'){
+      const loader = new picked.loader();
+      loader.parse(buf, '', (gltf) => {
+        obj = picked.post(gltf);
+        finishLoad(obj, filename, srcUrl);
+      }, (err) => {
+        throw new Error('GLTF 解析失败: ' + (err?.message||err));
+      });
+      return;
+    }
+
+    const loader = new picked.loader();
+    if (picked.ext === 'ply' || picked.ext === 'stl'){
+      obj = picked.post(loader.parse(buf));
+    } else if (picked.ext === 'obj'){
+      const text = new TextDecoder().decode(buf);
+      obj = picked.post(loader.parse(text));
+    } else {
+      throw new Error('未实现的格式: ' + picked.ext);
+    }
+    finishLoad(obj, filename, srcUrl);
+  } catch(e){
+    console.error(e);
+    setLoading(false);
+    toast('解析失败: ' + e.message);
+  }
+}
+
+function finishLoad(obj, filename, srcUrl){
+  disposeModel();
+  applyMaterial(obj);
+  modelContainer.add(obj);
+  currentModel = obj;
+  frameModel(obj);
+  $iFile.textContent = srcUrl ? `${filename}  (远程)` : filename;
+  $iFile.title = srcUrl || filename;
+  // Reset pose/position to default for new model
+  state.userRotX = state.userRotY = state.userRotZ = 0;
+  state.userPosX = state.userPosY = state.userPosZ = 0;
+  state.extraRotY = 0;
+  applyTransformToModel();
+  applyTransformToUI();
+  setLoading(false);
+  toast(`已加载: ${filename}`);
+}
+
+// ---------- Default load ----------
+loadFromUrl('./pan.stl', 'pan.stl');
+
+// ---------- UI events ----------
+$btnOpen.addEventListener('click', () => $fileInp.click());
+$btnReset.addEventListener('click', resetView);
+
+$fileInp.addEventListener('change', (e) => {
+  const f = e.target.files?.[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => loadFromBuffer(reader.result, f.name);
+  reader.onerror = () => toast('读取文件失败');
+  reader.readAsArrayBuffer(f);
+  $fileInp.value = '';
+});
+
+// Drag & drop
+let dragDepth = 0;
+window.addEventListener('dragenter', e => {
+  e.preventDefault();
+  dragDepth++;
+  $drop.classList.add('show');
+});
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('dragleave', e => {
+  e.preventDefault();
+  dragDepth--;
+  if (dragDepth <= 0){ dragDepth = 0; $drop.classList.remove('show'); }
+});
+window.addEventListener('drop', e => {
+  e.preventDefault();
+  dragDepth = 0;
+  $drop.classList.remove('show');
+  const f = e.dataTransfer?.files?.[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => loadFromBuffer(reader.result, f.name);
+  reader.readAsArrayBuffer(f);
+});
+
+// Switches
+function bindSwitch(el, getter, setter){
+  el.classList.toggle('on', getter());
+  el.addEventListener('click', () => {
+    setter(!getter());
+    el.classList.toggle('on', getter());
+  });
+}
+bindSwitch($tAuto, ()=>state.autoRotate, v => { state.autoRotate = v; controls.autoRotate = v; });
+bindSwitch($tWire, ()=>state.wireframe,  v => { state.wireframe  = v; if (currentModel) applyMaterial(currentModel, false); });
+bindSwitch($tGrid, ()=>state.showGrid,   v => {
+  state.showGrid = v;
+  grid.visible = v;
+  shadowPlane.visible = v;
+});
+
+// Extras panel: collapse/expand
+$extras.querySelector('.extras-head').addEventListener('click', () => {
+  $extras.classList.toggle('collapsed');
+});
+
+// Flip buttons
+$flipX.addEventListener('click', () => {
+  if (!currentModel) return;
+  state.userRotX += Math.PI;
+  applyTransformToModel();
+  applyTransformToUI();
+  toast('X 轴 180° 翻转');
+});
+$flipY.addEventListener('click', () => {
+  if (!currentModel) return;
+  state.userRotY += Math.PI;
+  applyTransformToModel();
+  applyTransformToUI();
+  toast('Y 轴 180° 翻转');
+});
+$flipZ.addEventListener('click', () => {
+  if (!currentModel) return;
+  state.userRotZ += Math.PI;
+  applyTransformToModel();
+  applyTransformToUI();
+  toast('Z 轴 180° 翻转');
+});
+// "放平" = detect current vertical axis, rotate so longest horizontal axis lies flat
+$flipFloor.addEventListener('click', () => {
+  if (!currentModel) return;
+  const box = new THREE.Box3().setFromObject(modelContainer);
+  const size = new THREE.Vector3(); box.getSize(size);
+  // 取最长的一根当新的"底" — 平放到 XZ 平面
+  let dropAxis = 'y', dropSize = size.y;
+  if (size.x > dropSize) { dropAxis = 'x'; dropSize = size.x; }
+  if (size.z > dropSize) { dropAxis = 'z'; dropSize = size.z; }
+  // Rotate so that axis becomes Y (vertical / up). Use the most common 90° steps.
+  const q = new THREE.Quaternion();
+  if (dropAxis === 'x') q.setFromEuler(new THREE.Euler(0, 0, Math.PI / 2));
+  else if (dropAxis === 'z') q.setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
+  modelContainer.quaternion.premultiply(q);
+  // Re-sync: 把 quaternion 拆成欧拉角存进 state
+  const e = new THREE.Euler().setFromQuaternion(modelContainer.quaternion, 'XYZ');
+  state.userRotX = e.x; state.userRotY = e.y; state.userRotZ = e.z;
+  applyTransformToUI();
+  // 重新对底面贴地
+  const newBox = new THREE.Box3().setFromObject(modelContainer);
+  state.userPosY = -newBox.min.y;
+  applyTransformToModel();
+  applyTransformToUI();
+  toast('已放平到地面');
+});
+$flipReset.addEventListener('click', () => {
+  if (!currentModel) return;
+  resetTransform();
+});
+
+// Position/rotation sliders
+const sliderKeys = { tx:'userPosX', ty:'userPosY', tz:'userPosZ', rx:'userRotX', ry:'userRotY', rz:'userRotZ' };
+for (const k in sliders){
+  sliders[k].inp.addEventListener('input', (e) => {
+    const v = parseFloat(e.target.value);
+    const isRot = k.startsWith('r');
+    state[sliderKeys[k]] = isRot ? v * DEG : v;
+    sliders[k].val.textContent = isRot ? Math.round(v) : v.toFixed(1);
+    applyTransformToModel();
+  });
+}
+
+// Background swatches
+document.querySelectorAll('.sw').forEach(s => {
+  s.addEventListener('click', () => {
+    document.querySelectorAll('.sw').forEach(x => x.classList.remove('active'));
+    s.classList.add('active');
+    setBackground(s.dataset.bg);
+  });
+});
+
+// Double-click → 720° spin animation (uses extraRotY so it doesn't fight sliders)
+renderer.domElement.addEventListener('dblclick', () => {
+  if (!currentModel) return;
+  state.spin720 = true;
+  const start = performance.now();
+  const dur = 1100; // ms
+  const startExtra = state.extraRotY;
+  const targetExtra = startExtra + Math.PI * 4; // 720°
+  function tick(now){
+    const t = Math.min((now - start)/dur, 1);
+    // easeInOutCubic
+    const e = t<0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2;
+    state.extraRotY = startExtra + (targetExtra - startExtra) * e;
+    applyTransformToModel();
+    if (t < 1) requestAnimationFrame(tick);
+    else { state.spin720 = false; state.extraRotY = 0; } // settle back to userRotY
+  }
+  requestAnimationFrame(tick);
+});
+
+// Keyboard
+window.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  switch(e.key.toLowerCase()){
+    case 'r': resetView(); break;
+    case ' ':
+      e.preventDefault();
+      $tAuto.click(); break;
+    case 'w': $tWire.click(); break;
+    case 'g': $tGrid.click(); break;
+    case 'escape': resetView(); break;
+  }
+});
+
+// Resize
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ---------- FPS counter ----------
+let fpsFrames = 0, fpsLast = performance.now();
+function updateFps(){
+  fpsFrames++;
+  const now = performance.now();
+  if (now - fpsLast >= 500){
+    const fps = Math.round(fpsFrames * 1000 / (now - fpsLast));
+    $iFps.textContent = fps;
+    fpsFrames = 0; fpsLast = now;
+  }
+}
+
+// ---------- Render loop ----------
+function animate(){
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+  updateFps();
+}
+animate();
+
+// Expose for debug
+window.__viewer = { scene, camera, renderer, controls, loadFromUrl, loadFromBuffer };
+</script>
+</body>
+</html>
